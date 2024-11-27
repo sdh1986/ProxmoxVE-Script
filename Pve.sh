@@ -18,7 +18,7 @@ fi
 
 # Backup network interfaces and APT sources
 TimeStamp=$(date +%Y%m%d_%H%M%S)
-BackupPath="/root/backup"
+BackupPath="/home/backup"
 mkdir -p "${BackupPath}"
 
 cp -p "/etc/network/interfaces" "${BackupPath}/interfaces_backup_${TimeStamp}"
