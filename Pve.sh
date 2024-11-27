@@ -84,7 +84,7 @@ if [ -f "${LXCSourceFile}" ]; then
   if ! grep -q "mirrors.ustc.edu.cn" "${LXCSourceFile}"; then
     #sed -i.backup_${TimeStamp} 's|http://download.proxmox.com|https://mirrors.ustc.edu.cn/proxmox|g' "${LXCSourceFile}"
     sed -i 's|http://download.proxmox.com|https://mirrors.ustc.edu.cn/proxmox|g' "${LXCSourceFile}"
-    echo "LXC/LXD container sources replaced with USTC mirrors. Backup created: ${LXCSourceFile}.backup_${TimeStamp}"
+    echo "LXC/LXD container sources replaced with USTC mirrors."
   else
     echo "LXC/LXD container sources already set to USTC mirrors. No action needed."
   fi
