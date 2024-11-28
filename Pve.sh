@@ -1,97 +1,152 @@
 #!/bin/bash
+# Exit on error
+set -e
+# Catch errors in pipelines
+set -o pipefail
 
-# Update CT templates
-pveam update
+# Logging functions
+LogInfo() {
+  echo -e "\033[1;32m[INFO] $1\033[0m"
+}
+
+LogWarn() {
+  echo -e "\033[1;33m[WARNING] $1\033[0m"
+}
+
+LogError() {
+  echo -e "\033[1;31m[ERROR] $1\033[0m"
+}
+
+# Ensure backup directory exists
+EnsureBackupDir() {
+  local BackupDir="$1"
+  if [[ ! -d "${BackupDir}" ]]; then
+    mkdir -p "${BackupDir}"
+    LogInfo "Backup directory created: ${BackupDir}"
+  fi
+}
+
+# Backup a file
+BackupFile() {
+  local SrcFile="$1"
+  local BackupDir="$2"
+  local TimeStamp="$3"
+  
+  if [[ -f "${SrcFile}" ]]; then
+    cp -p "${SrcFile}" "${BackupDir}/$(basename "${SrcFile}")_backup_${TimeStamp}"
+    LogInfo "Backup of ${SrcFile} created in ${BackupDir}"
+  else
+    LogWarn "${SrcFile} not found. Skipping backup."
+  fi
+}
 
 # Disable PVE Enterprise source
-PveEnterprisePath="/etc/apt/sources.list.d/pve-enterprise.list"
-if [ -f "${PveEnterprisePath}" ]; then
-  if ! grep -q "^#" "${PveEnterprisePath}"; then
-    sed -i 's/^/# /' "${PveEnterprisePath}"
-    echo "PVE Enterprise source has been disabled."
+DisablePveEnterpriseSource() {
+  local EnterprisePath="/etc/apt/sources.list.d/pve-enterprise.list"
+  
+  if [[ -f "${EnterprisePath}" ]]; then
+    if ! grep -q "^#" "${EnterprisePath}"; then
+      sed -i 's/^/# /' "${EnterprisePath}"
+      LogInfo "PVE Enterprise source has been disabled."
+    else
+      LogInfo "PVE Enterprise source is already disabled."
+    fi
   else
-    echo "PVE Enterprise source is already disabled. No action needed."
+    LogWarn "PVE Enterprise source file not found. Skipping."
   fi
-else
-  echo "PVE Enterprise source file not found. Skipping."
-fi
+}
 
-# Backup network interfaces and APT sources
-TimeStamp=$(date +%Y%m%d_%H%M%S)
-BackupPath="/home/backup"
-mkdir -p "${BackupPath}"
-
-cp -p "/etc/network/interfaces" "${BackupPath}/interfaces_backup_${TimeStamp}"
-cp -p "/etc/apt/sources.list" "${BackupPath}/sources.list_backup_${TimeStamp}"
-cp -p "/usr/share/perl5/PVE/APLInfo.pm" "${BackupPath}/APLInfo.pm_backup_${TimeStamp}"
-echo "Backup completed. Files saved to ${BackupPath}."
-
-# Replace Debian sources with USTC mirrors
-sed -i 's#http://ftp.debian.org#https://mirrors.ustc.edu.cn#g' "/etc/apt/sources.list"
-sed -i 's#http://security.debian.org#https://mirrors.ustc.edu.cn/debian-security#g' "/etc/apt/sources.list"
-echo "Debian sources replaced with USTC mirrors."
-
-# Get system version information
-if [ -f "/etc/os-release" ]; then
-  . "/etc/os-release"
-else
-  echo "Cannot find /etc/os-release. System version information is unavailable."
-  exit 1
-fi
-
-# Replace PVE no-subscription source
-PveNoSubscriptionPath="/etc/apt/sources.list.d/pve-no-subscription.list"
-if [ ! -f "${PveNoSubscriptionPath}" ] || ! grep -q "mirrors.ustc.edu.cn" "${PveNoSubscriptionPath}"; then
-  echo "deb https://mirrors.ustc.edu.cn/proxmox/debian/pve $VERSION_CODENAME pve-no-subscription" > "${PveNoSubscriptionPath}"
-  echo "PVE no-subscription source added."
-else
-  echo "PVE no-subscription source already exists. No action needed."
-fi
-
-# Replace Ceph repository
-CephListPath="/etc/apt/sources.list.d/ceph.list"
-if [ -f "${CephListPath}" ]; then
-  CEPH_CODENAME=$(ceph -v | awk '/ceph version / {print $(NF-1)}')
-  if [ -n "${CEPH_CODENAME}" ]; then
-    echo "deb https://mirrors.ustc.edu.cn/proxmox/debian/ceph-${CEPH_CODENAME} $VERSION_CODENAME no-subscription" > "${CephListPath}"
-    echo "Ceph repository updated."
+# Replace repository URLs
+ReplaceSources() {
+  local File="$1"
+  local OldUrl="$2"
+  local NewUrl="$3"
+  
+  if [[ -f "${File}" ]]; then
+    sed -i "s|${OldUrl}|${NewUrl}|g" "${File}"
+    LogInfo "Replaced ${OldUrl} with ${NewUrl} in ${File}."
   else
-    echo "Unable to determine Ceph codename. Skipping update."
+    LogWarn "${File} not found. Skipping source replacement."
   fi
-else
-  echo "Ceph source file not found. Skipping."
-fi
-
-# Clean APT cache
-apt clean all
-echo "APT cache cleaned."
+}
 
 # Update and upgrade system
-apt update && apt full-upgrade -y
-echo "System updated and fully upgraded."
+UpdateAndUpgrade() {
+  apt update && apt full-upgrade -y
+  LogInfo "System updated and fully upgraded."
+}
 
-# Install OpenvSwitch
-if ! dpkg -l | grep -q "openvswitch-switch"; then
-  apt install openvswitch-switch -y
-  echo "OpenvSwitch installed."
-else
-  echo "OpenvSwitch is already installed. No action needed."
-fi
-
-# Replace LXC/LXD container sources with USTC mirrors
-LXCSourceFile="/usr/share/perl5/PVE/APLInfo.pm"
-if [ -f "${LXCSourceFile}" ]; then
-  if ! grep -q "mirrors.ustc.edu.cn" "${LXCSourceFile}"; then
-    #sed -i.backup_${TimeStamp} 's|http://download.proxmox.com|https://mirrors.ustc.edu.cn/proxmox|g' "${LXCSourceFile}"
-    sed -i 's|http://download.proxmox.com|https://mirrors.ustc.edu.cn/proxmox|g' "${LXCSourceFile}"
-    echo "LXC/LXD container sources replaced with USTC mirrors."
+# Install a package
+InstallPackage() {
+  local Package="$1"
+  
+  if ! dpkg -l | grep -q "${Package}"; then
+    apt install -y "${Package}"
+    LogInfo "${Package} installed."
   else
-    echo "LXC/LXD container sources already set to USTC mirrors. No action needed."
+    LogWarn "${Package} is already installed. No action needed."
   fi
-else
-  echo "LXC/LXD source file not found. Skipping."
-fi
+}
 
-# Restart relevant services to apply changes
-systemctl restart pvedaemon.service pveproxy.service
-echo "Relevant services restarted."
+# Main program logic
+Main() {
+  local TimeStamp
+  local BackupPath="/home/backup"
+  TimeStamp=$(date +%Y%m%d_%H%M%S)
+
+  LogInfo "Updating CT templates..."
+  pveam update
+
+  DisablePveEnterpriseSource
+
+  EnsureBackupDir "${BackupPath}"
+  BackupFile "/etc/network/interfaces" "${BackupPath}" "${TimeStamp}"
+  BackupFile "/etc/apt/sources.list" "${BackupPath}" "${TimeStamp}"
+  BackupFile "/usr/share/perl5/PVE/APLInfo.pm" "${BackupPath}" "${TimeStamp}"
+
+  ReplaceSources "/etc/apt/sources.list" "http://ftp.debian.org" "https://mirrors.ustc.edu.cn"
+  ReplaceSources "/etc/apt/sources.list" "http://security.debian.org" "https://mirrors.ustc.edu.cn/debian-security"
+
+  # Load system version information
+  if [[ -f "/etc/os-release" ]]; then
+    . "/etc/os-release"
+  else
+    LogError "/etc/os-release not found. Exiting."
+    exit 1
+  fi
+
+  # Replace PVE no-subscription source
+  local PveNoSubscriptionPath="/etc/apt/sources.list.d/pve-no-subscription.list"
+  echo "deb https://mirrors.ustc.edu.cn/proxmox/debian/pve $VERSION_CODENAME pve-no-subscription" >"${PveNoSubscriptionPath}"
+  LogInfo "PVE no-subscription source updated."
+
+  # Replace Ceph repository
+  local CephListPath="/etc/apt/sources.list.d/ceph.list"
+  if [[ -f "${CephListPath}" ]]; then
+    local CephCodename
+    CephCodename=$(ceph -v | awk '/ceph version / {print $(NF-1)}')
+    if [[ -n "${CephCodename}" ]]; then
+      echo "deb https://mirrors.ustc.edu.cn/proxmox/debian/ceph-${CephCodename} $VERSION_CODENAME no-subscription" >"${CephListPath}"
+      LogInfo "Ceph repository updated."
+    else
+      LogWarn "Ceph codename could not be determined. Skipping Ceph repository update."
+    fi
+  else
+    LogWarn "Ceph source file not found. Skipping."
+  fi
+
+  apt clean all
+  LogInfo "APT cache cleaned."
+
+  UpdateAndUpgrade
+
+  InstallPackage "openvswitch-switch"
+
+  ReplaceSources "/usr/share/perl5/PVE/APLInfo.pm" "http://download.proxmox.com" "https://mirrors.ustc.edu.cn/proxmox"
+
+  systemctl restart pvedaemon.service pveproxy.service
+  LogInfo "Relevant services restarted."
+}
+
+# Execute the main program
+Main "$@"
