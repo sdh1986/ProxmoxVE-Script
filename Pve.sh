@@ -4,7 +4,8 @@ set -e
 # Catch errors in pipelines
 set -o pipefail
 
-# Logging functions
+# ---[ Logging Functions ]-----------------------------------------------------
+
 LogInfo() {
   echo -e "\033[1;32m[INFO] $1\033[0m"
 }
@@ -17,12 +18,16 @@ LogError() {
   echo -e "\033[1;31m[ERROR] $1\033[0m"
 }
 
+# ---[ Helper Functions ]-----------------------------------------------------
+
 # Ensure backup directory exists
 EnsureBackupDir() {
   local BackupDir="$1"
   if [[ ! -d "${BackupDir}" ]]; then
     mkdir -p "${BackupDir}"
     LogInfo "Backup directory created: ${BackupDir}"
+  else
+    LogInfo "Backup directory already exists: ${BackupDir}" # Added: Indication if dir exists
   fi
 }
 
@@ -31,9 +36,10 @@ BackupFile() {
   local SrcFile="$1"
   local BackupDir="$2"
   local TimeStamp="$3"
-  
+
   if [[ -f "${SrcFile}" ]]; then
-    cp -p "${SrcFile}" "${BackupDir}/$(basename "${SrcFile}")_backup_${TimeStamp}"
+    # Use 'cp -a' to preserve all attributes, including timestamps
+    cp -a "${SrcFile}" "${BackupDir}/$(basename "${SrcFile}")_backup_${TimeStamp}"
     LogInfo "Backup of ${SrcFile} created in ${BackupDir}"
   else
     LogWarn "${SrcFile} not found. Skipping backup."
@@ -43,14 +49,11 @@ BackupFile() {
 # Disable PVE Enterprise source
 DisablePveEnterpriseSource() {
   local EnterprisePath="/etc/apt/sources.list.d/pve-enterprise.list"
-  
+
   if [[ -f "${EnterprisePath}" ]]; then
-    if ! grep -q "^#" "${EnterprisePath}"; then
-      sed -i 's/^/# /' "${EnterprisePath}"
-      LogInfo "PVE Enterprise source has been disabled."
-    else
-      LogInfo "PVE Enterprise source is already disabled."
-    fi
+    # Simplified check and modification
+    sed -i '/^[^#]/s/^/# /' "${EnterprisePath}"
+    LogInfo "PVE Enterprise source has been disabled (if it was enabled)."
   else
     LogWarn "PVE Enterprise source file not found. Skipping."
   fi
@@ -61,10 +64,11 @@ ReplaceSources() {
   local File="$1"
   local OldUrl="$2"
   local NewUrl="$3"
-  
+
   if [[ -f "${File}" ]]; then
-    sed -i "s|${OldUrl}|${NewUrl}|g" "${File}"
-    LogInfo "Replaced ${OldUrl} with ${NewUrl} in ${File}."
+    # Use 'sed -i.bak' to create a backup of the original file
+    sed -i.bak "s|${OldUrl}|${NewUrl}|g" "${File}"
+    LogInfo "Replaced ${OldUrl} with ${NewUrl} in ${File}. Backup created."
   else
     LogWarn "${File} not found. Skipping source replacement."
   fi
@@ -74,13 +78,29 @@ ReplaceSources() {
 UpdateAndUpgrade() {
   apt update && apt full-upgrade -y
   LogInfo "System updated and fully upgraded."
+
+  # Prompt user before running apt autoremove
+  read -r -p "Do you want to run 'apt autoremove' to remove unused packages? [y/N] " response
+  case "$response" in
+    [yY][eE][sS]|[yY])
+      apt autoremove -y
+      LogInfo "Unused packages removed."
+      ;;
+    *)
+      LogInfo "Skipping 'apt autoremove'."
+      ;;
+  esac
+  
+  apt clean
+  LogInfo "APT cache cleaned."
 }
 
 # Install a package
 InstallPackage() {
   local Package="$1"
-  
-  if ! dpkg -l | grep -q "${Package}"; then
+
+  # Use 'dpkg-query' for a more robust check
+  if ! dpkg-query -W -f='${Status}' "${Package}" 2>/dev/null | grep -q "install ok installed"; then
     apt install -y "${Package}"
     LogInfo "${Package} installed."
   else
@@ -88,7 +108,8 @@ InstallPackage() {
   fi
 }
 
-# Main program logic
+# ---[ Main Logic ]-----------------------------------------------------------
+
 Main() {
   local TimeStamp
   local BackupPath="/home/backup"
@@ -109,7 +130,8 @@ Main() {
 
   # Load system version information
   if [[ -f "/etc/os-release" ]]; then
-    . "/etc/os-release"
+    # Use 'source' instead of '.' for better compatibility
+    source "/etc/os-release"
   else
     LogError "/etc/os-release not found. Exiting."
     exit 1
@@ -117,17 +139,23 @@ Main() {
 
   # Replace PVE no-subscription source
   local PveNoSubscriptionPath="/etc/apt/sources.list.d/pve-no-subscription.list"
-  echo "deb https://mirrors.ustc.edu.cn/proxmox/debian/pve $VERSION_CODENAME pve-no-subscription" >"${PveNoSubscriptionPath}"
+  # Directly write to the file, using a single command
+  cat > "${PveNoSubscriptionPath}" << EOF
+deb https://mirrors.ustc.edu.cn/proxmox/debian/pve ${VERSION_CODENAME} pve-no-subscription
+EOF
   LogInfo "PVE no-subscription source updated."
 
   # Replace Ceph repository
   local CephListPath="/etc/apt/sources.list.d/ceph.list"
   if [[ -f "${CephListPath}" ]]; then
     local CephCodename
-    CephCodename=$(ceph -v | awk '/ceph version / {print $(NF-1)}')
+    CephCodename=$(ceph -v 2>/dev/null | awk '/ceph version / {print $(NF-1)}')
     if [[ -n "${CephCodename}" ]]; then
-      echo "deb https://mirrors.ustc.edu.cn/proxmox/debian/ceph-${CephCodename} $VERSION_CODENAME no-subscription" >"${CephListPath}"
-      LogInfo "Ceph repository updated."
+        # Directly write to the file, using a single command
+        cat > "${CephListPath}" << EOF
+deb https://mirrors.ustc.edu.cn/proxmox/debian/ceph-${CephCodename} ${VERSION_CODENAME} no-subscription
+EOF
+        LogInfo "Ceph repository updated."
     else
       LogWarn "Ceph codename could not be determined. Skipping Ceph repository update."
     fi
@@ -135,20 +163,20 @@ Main() {
     LogWarn "Ceph source file not found. Skipping."
   fi
 
-  apt clean all
-  LogInfo "APT cache cleaned."
-
   UpdateAndUpgrade
 
   InstallPackage "openvswitch-switch"
-  LogInfo "InstallPackage."
 
   ReplaceSources "/usr/share/perl5/PVE/APLInfo.pm" "http://download.proxmox.com" "https://mirrors.ustc.edu.cn/proxmox"
-  LogInfo "ReplaceSources."
 
-  systemctl restart pveproxy.service pvedaemon.service
+  # Add script completion message
+  LogInfo "Script completed successfully."
+
+  # Restart Services pveproxy&pvedaemon
   LogInfo "Relevant services restarted."
+  systemctl restart pveproxy.service pvedaemon.service
+
 }
 
-# Execute the main program
-Main "$@"
+# Execute the main program, ensuring proper error handling
+Main "$@" || { LogError "Script failed."; exit 1; }
