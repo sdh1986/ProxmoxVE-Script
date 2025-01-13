@@ -144,7 +144,7 @@ Main() {
 
   ReplaceSources "/usr/share/perl5/PVE/APLInfo.pm" "http://download.proxmox.com" "https://mirrors.ustc.edu.cn/proxmox"
 
-  systemctl restart pvedaemon.service pveproxy.service
+  systemctl restart pveproxy.service pvedaemon.service
   LogInfo "Relevant services restarted."
 }
 
