@@ -170,7 +170,7 @@ EOF
   ReplaceSources "/usr/share/perl5/PVE/APLInfo.pm" "http://download.proxmox.com" "https://mirrors.ustc.edu.cn/proxmox"
 
   # Add script completion message
-  LogInfo "Script completed successfully."
+  LogInfo "The script completed successfully. Please reopen the window for subsequent operations."
 
   # Restart Services pveproxy&pvedaemon
   LogInfo "Relevant services restarted."
