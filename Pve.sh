@@ -10,6 +10,10 @@ LogInfo() {
   echo -e "\033[1;32m[INFO] $1\033[0m"
 }
 
+LogInfo1() {
+  echo -e "\033[1;43m[INFO] $1\033[0m"
+}
+
 LogWarn() {
   echo -e "\033[1;33m[WARNING] $1\033[0m"
 }
@@ -170,7 +174,7 @@ EOF
   ReplaceSources "/usr/share/perl5/PVE/APLInfo.pm" "http://download.proxmox.com" "https://mirrors.ustc.edu.cn/proxmox"
 
   # Add script completion message
-  LogInfo "The script completed successfully. Please reopen the window for subsequent operations."
+  LogInfo1 "The script completed successfully. Please reopen the window for subsequent operations."
 
   # Restart Services pveproxy&pvedaemon
   LogInfo "Relevant services restarted."
