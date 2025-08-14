@@ -1,186 +1,253 @@
 #!/bin/bash
-# Exit on error
+#
+# ==============================================================================
+# Proxmox VE Post-Install Optimization Script
+#
+# Description: This script optimizes a Proxmox VE installation by:
+#              - Disabling the enterprise repository.
+#              - Configuring community (no-subscription) and Ceph repositories.
+#              - Switching APT sources to a specified mirror.
+#              - Backing up critical configuration files before modification.
+#              - Updating the system and installing optional packages.
+#              - Adjusting CT update URLs to use the mirror.
+#
+# Usage:       sudo bash ./pve-optimize.sh
+# ==============================================================================
+
+# ---[ Script Configuration ]--------------------------------------------------
+
+# Exit immediately if a command exits with a non-zero status.
 set -e
-# Catch errors in pipelines
+# Treat unset variables as an error when substituting.
+set -u
+# Pipes fail on the first command that fails, not the last.
 set -o pipefail
 
+# ---[ Constants ]-------------------------------------------------------------
+
+# Directory to store backups of modified files.
+readonly BACKUP_DIR="/root/pve_config_backups"
+# Timestamp for backup file subdirectories.
+readonly TIME_STAMP=$(date "+%Y%m%d-%H%M%S")
+# Mirror URL to use for Debian and Proxmox repositories.
+readonly MIRROR_URL="https://mirrors.ustc.edu.cn"
+
 # ---[ Logging Functions ]-----------------------------------------------------
+# These functions add color-coded prefixes to messages for better readability.
 
 LogInfo() {
-  echo -e "\033[1;32m[INFO] $1\033[0m"
+  echo -e "\033[1;32m[INFO] \033[0m$1"
 }
 
-LogInfo1() {
-  echo -e "\033[1;43m[INFO] $1\033[0m"
+LogSuccess() {
+  echo -e "\033[1;36m[SUCCESS] \033[0m$1"
 }
 
 LogWarn() {
-  echo -e "\033[1;33m[WARNING] $1\033[0m"
+  echo -e "\033[1;33m[WARN] \033[0m$1"
 }
 
 LogError() {
-  echo -e "\033[1;31m[ERROR] $1\033[0m"
+  # Direct error messages to stderr.
+  echo -e "\033[1;31m[ERROR] \033[0m$1" >&2
 }
 
 # ---[ Helper Functions ]-----------------------------------------------------
 
-# Ensure backup directory exists
-EnsureBackupDir() {
-  local BackupDir="$1"
-  if [[ ! -d "${BackupDir}" ]]; then
-    mkdir -p "${BackupDir}"
-    LogInfo "Backup directory created: ${BackupDir}"
-  else
-    LogInfo "Backup directory already exists: ${BackupDir}" # Added: Indication if dir exists
-  fi
-}
-
-# Backup a file
+# Creates a backup of a given file in a timestamped directory.
+# Arguments:
+#   $1: Path to the source file.
 BackupFile() {
-  local SrcFile="$1"
-  local BackupDir="$2"
-  local TimeStamp="$3"
+  local src_file="$1"
+  local backup_dest_dir="${BACKUP_DIR}/${TIME_STAMP}"
 
-  if [[ -f "${SrcFile}" ]]; then
-    # Use 'cp -a' to preserve all attributes, including timestamps
-    cp -a "${SrcFile}" "${BackupDir}/$(basename "${SrcFile}")_backup_${TimeStamp}"
-    LogInfo "Backup of ${SrcFile} created in ${BackupDir}"
-  else
-    LogWarn "${SrcFile} not found. Skipping backup."
+  if [[ ! -f "$src_file" ]]; then
+    LogWarn "File not found, skipping backup: $src_file"
+    return
   fi
+
+  mkdir -p "$backup_dest_dir"
+  # The '-a' flag preserves permissions, ownership, and timestamps.
+  cp -a "$src_file" "${backup_dest_dir}/"
+  LogInfo "Backed up '$src_file' to '${backup_dest_dir}/'"
 }
 
-# Disable PVE Enterprise source
-DisablePveEnterpriseSource() {
-  local EnterprisePath="/etc/apt/sources.list.d/pve-enterprise.list"
+# Disables a PVE source file by renaming it with a .bak extension.
+# Arguments:
+#   $1: The base name of the source file (e.g., 'pve-enterprise').
+DisableSourceFile() {
+    local source_name="$1"
+    local source_file="/etc/apt/sources.list.d/${source_name}.sources"
 
-  if [[ -f "${EnterprisePath}" ]]; then
-    # Simplified check and modification
-    sed -i '/^[^#]/s/^/# /' "${EnterprisePath}"
-    LogInfo "PVE Enterprise source has been disabled (if it was enabled)."
-  else
-    LogWarn "PVE Enterprise source file not found. Skipping."
-  fi
+    if [[ -f "$source_file" ]]; then
+        mv "$source_file" "${source_file}.bak"
+        LogInfo "Disabled source file: $source_file"
+    else
+        LogWarn "Source file not found, skipping disable: $source_file"
+    fi
 }
 
-# Replace repository URLs
-ReplaceSources() {
-  local File="$1"
-  local OldUrl="$2"
-  local NewUrl="$3"
+# Updates the system, including a prompt for cleaning up unused packages.
+UpdateSystem() {
+  LogInfo "Updating package lists and upgrading the system..."
+  apt-get update && apt-get full-upgrade -y
+  LogSuccess "System updated and upgraded successfully."
 
-  if [[ -f "${File}" ]]; then
-    # Use 'sed -i.bak' to create a backup of the original file
-    sed -i.bak "s|${OldUrl}|${NewUrl}|g" "${File}"
-    LogInfo "Replaced ${OldUrl} with ${NewUrl} in ${File}. Backup created."
+  # Prompt user before running apt autoremove.
+  read -r -p "Do you want to run 'apt-get autoremove' to remove unused packages? [y/N] " response
+  if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    apt-get autoremove -y
+    LogInfo "Unused packages have been removed."
   else
-    LogWarn "${File} not found. Skipping source replacement."
+    LogInfo "Skipping 'apt-get autoremove'."
   fi
-}
 
-# Update and upgrade system
-UpdateAndUpgrade() {
-  apt update && apt full-upgrade -y
-  LogInfo "System updated and fully upgraded."
-
-  # Prompt user before running apt autoremove
-  read -r -p "Do you want to run 'apt autoremove' to remove unused packages? [y/N] " response
-  case "$response" in
-    [yY][eE][sS]|[yY])
-      apt autoremove -y
-      LogInfo "Unused packages removed."
-      ;;
-    *)
-      LogInfo "Skipping 'apt autoremove'."
-      ;;
-  esac
-  
-  apt clean
-  LogInfo "APT cache cleaned."
-}
-
-# Install a package
-InstallPackage() {
-  local Package="$1"
-
-  # Use 'dpkg-query' for a more robust check
-  if ! dpkg-query -W -f='${Status}' "${Package}" 2>/dev/null | grep -q "install ok installed"; then
-    apt install -y "${Package}"
-    LogInfo "${Package} installed."
-  else
-    LogWarn "${Package} is already installed. No action needed."
-  fi
+  apt-get clean
+  LogInfo "APT cache has been cleaned."
 }
 
 # ---[ Main Logic ]-----------------------------------------------------------
 
 Main() {
-  local TimeStamp
-  local BackupPath="/home/backup"
-  TimeStamp=$(date +%Y%m%d_%H%M%S)
+  # --- 1. Initial Checks and Setup ---
+  LogInfo "Starting Proxmox VE post-install optimization..."
 
-  LogInfo "Updating CT templates..."
-  pveam update
-
-  DisablePveEnterpriseSource
-
-  EnsureBackupDir "${BackupPath}"
-  BackupFile "/etc/network/interfaces" "${BackupPath}" "${TimeStamp}"
-  BackupFile "/etc/apt/sources.list" "${BackupPath}" "${TimeStamp}"
-  BackupFile "/usr/share/perl5/PVE/APLInfo.pm" "${BackupPath}" "${TimeStamp}"
-
-  ReplaceSources "/etc/apt/sources.list" "http://ftp.debian.org" "https://mirrors.ustc.edu.cn"
-  ReplaceSources "/etc/apt/sources.list" "http://security.debian.org" "https://mirrors.ustc.edu.cn/debian-security"
-
-  # Load system version information
-  if [[ -f "/etc/os-release" ]]; then
-    # Use 'source' instead of '.' for better compatibility
-    source "/etc/os-release"
-  else
-    LogError "/etc/os-release not found. Exiting."
+  # Ensure the script is run as root, as it modifies system files.
+  if [[ $EUID -ne 0 ]]; then
+    LogError "This script must be run as root. Please use 'sudo'."
     exit 1
   fi
 
-  # Replace PVE no-subscription source
-  local PveNoSubscriptionPath="/etc/apt/sources.list.d/pve-no-subscription.list"
-  # Directly write to the file, using a single command
-  cat > "${PveNoSubscriptionPath}" << EOF
-deb https://mirrors.ustc.edu.cn/proxmox/debian/pve ${VERSION_CODENAME} pve-no-subscription
-EOF
-  LogInfo "PVE no-subscription source updated."
+  # Load OS release information to get the Debian codename (e.g., bookworm, trixie).
+  if [[ ! -f /etc/os-release ]]; then
+    LogError "/etc/os-release file not found. Cannot determine Debian version."
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source /etc/os-release
+  # The 'VERSION_CODENAME' variable is now available from the sourced file.
+  LogInfo "Detected Debian Codename: $VERSION_CODENAME"
 
-  # Replace Ceph repository
-  local CephListPath="/etc/apt/sources.list.d/ceph.list"
-  if [[ -f "${CephListPath}" ]]; then
-    local CephCodename
-    CephCodename=$(ceph -v 2>/dev/null | awk '/ceph version / {print $(NF-1)}')
-    if [[ -n "${CephCodename}" ]]; then
-        # Directly write to the file, using a single command
-        cat > "${CephListPath}" << EOF
-deb https://mirrors.ustc.edu.cn/proxmox/debian/ceph-${CephCodename} ${VERSION_CODENAME} no-subscription
+
+  # --- 2. Backup Critical Configuration Files ---
+  LogInfo "Backing up existing configuration files to $BACKUP_DIR..."
+  # An array makes it easy to add more files to the backup list.
+  local files_to_backup=(
+    "/etc/apt/sources.list"
+    "/etc/apt/sources.list.d/pve-enterprise.sources"
+    "/etc/apt/sources.list.d/debian.sources"
+    "/usr/share/perl5/PVE/APLInfo.pm"
+    "/etc/network/interfaces" # From your original script
+  )
+  for file in "${files_to_backup[@]}"; do
+    BackupFile "$file"
+  done
+  # Also back up the Ceph source if it exists.
+  if [[ -f "/etc/apt/sources.list.d/ceph.sources" ]]; then
+      BackupFile "/etc/apt/sources.list.d/ceph.sources"
+  fi
+  LogSuccess "Configuration backup complete."
+
+
+  # --- 3. Update APT Source Lists ---
+  LogInfo "Configuring APT repositories to use mirror: $MIRROR_URL"
+
+  # Disable the PVE Enterprise repository.
+  DisableSourceFile "pve-enterprise"
+
+  # Overwrite the legacy sources.list file. Proxmox now uses the .sources format,
+  # so this file can be kept minimal to avoid conflicts.
+  echo "# See /etc/apt/sources.list.d/ for repository configuration" > /etc/apt/sources.list
+  LogInfo "Cleared legacy /etc/apt/sources.list file."
+
+  # Configure Debian sources using the detected codename.
+  cat > /etc/apt/sources.list.d/debian.sources <<EOF
+Types: deb
+URIs: ${MIRROR_URL}/debian
+Suites: ${VERSION_CODENAME} ${VERSION_CODENAME}-updates
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: ${MIRROR_URL}/debian-security
+Suites: ${VERSION_CODENAME}-security
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
-        LogInfo "Ceph repository updated."
+  LogInfo "Updated Debian source file."
+
+  # Configure PVE no-subscription source.
+  cat > /etc/apt/sources.list.d/pve-no-subscription.sources <<EOF
+Types: deb
+URIs: ${MIRROR_URL}/proxmox/debian/pve
+Suites: ${VERSION_CODENAME}
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+  LogInfo "Updated PVE no-subscription source file."
+
+  # Configure Ceph repository, if Ceph is installed.
+  if command -v ceph &> /dev/null; then
+    # This improved method reliably extracts the Ceph codename (e.g., 'quincy').
+    local CEPH_CODENAME
+    CEPH_CODENAME=`ceph -v | grep ceph | awk '{print $(NF-1)}'`
+
+    if [[ -n "$CEPH_CODENAME" ]]; then
+      LogInfo "Detected Ceph version: $CEPH_CODENAME"
+      cat > /etc/apt/sources.list.d/ceph.sources <<EOF
+Types: deb
+URIs: ${MIRROR_URL}/proxmox/debian/ceph-${CEPH_CODENAME}
+Suites: ${VERSION_CODENAME}
+Components: no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+      LogInfo "Updated Ceph source file."
     else
-      LogWarn "Ceph codename could not be determined. Skipping Ceph repository update."
+      LogWarn "Could not determine Ceph codename. Skipping Ceph repository update."
     fi
   else
-    LogWarn "Ceph source file not found. Skipping."
+    LogInfo "Ceph is not installed. Skipping Ceph repository configuration."
   fi
 
-  UpdateAndUpgrade
 
-  InstallPackage "openvswitch-switch"
+  # --- 4. System Update and Package Management ---
+  # Update CT (LXC) templates first.
+  LogInfo "Updating CT (LXC) templates..."
+  pveam update
 
-  ReplaceSources "/usr/share/perl5/PVE/APLInfo.pm" "http://download.proxmox.com" "https://mirrors.ustc.edu.cn/proxmox"
+  # Perform a full system update and upgrade.
+  UpdateSystem
+  
+  # Ask the user if they want to install openvswitch-switch, as it's not
+  # always required.
+  read -r -p "Do you want to install 'openvswitch-switch' for advanced networking? [y/N] " response
+  if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    LogInfo "Installing openvswitch-switch..."
+    apt-get install -y openvswitch-switch
+    LogSuccess "'openvswitch-switch' has been installed."
+  else
+    LogInfo "Skipping installation of 'openvswitch-switch'."
+  fi
 
-  # Add script completion message
-  LogInfo1 "The script completed successfully. Please reopen the window for subsequent operations."
 
-  # Restart Services pveproxy&pvedaemon
-  LogInfo "Relevant services restarted."
+  # --- 5. Final Configuration Tweaks ---
+  LogInfo "Updating URL for CT template downloads..."
+  # This sed command replaces the default download URL with the mirror.
+  sed -i.bak "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
+  LogSuccess "CT template download URL has been updated."
+  
+
+  # --- 6. Restart Services ---
+  LogInfo "Restarting PVE services to apply changes..."
   systemctl restart pveproxy.service pvedaemon.service
-
+  
+  LogSuccess "Services restarted."
+  echo # Add a blank line for spacing.
+  LogSuccess "Proxmox optimization script completed successfully!"
+  LogInfo "It is recommended to reboot the system to ensure all changes take effect."
 }
 
-# Execute the main program, ensuring proper error handling
-Main "$@" || { LogError "Script failed."; exit 1; }
+# ---[ Script Execution ]-----------------------------------------------------
+
+# Run the main function, allowing 'set -e' to handle any errors.
+Main "$@"
