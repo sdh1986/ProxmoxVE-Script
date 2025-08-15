@@ -1,17 +1,20 @@
 #!/bin/bash
 #
 # ==============================================================================
-# Proxmox VE Post-Install Optimization Script
+# Unified Proxmox VE Post-Install Optimization Script
 #
-# Description: This script optimizes a Proxmox VE installation by:
-#              - Disabling the enterprise repository.
-#              - Configuring community (no-subscription) and Ceph repositories.
-#              - Switching APT sources to a specified mirror.
-#              - Backing up critical configuration files before modification.
-#              - Updating the system and installing optional packages.
-#              - Adjusting CT update URLs to use the mirror.
+# Description: This script intelligently optimizes a Proxmox VE installation
+#              for versions 8.x (Debian 12) and 9.x (Debian 13). It detects
+#              the Debian version and applies the correct repository format.
 #
-# Usage:       sudo bash ./Pve.sh
+# Key Features:
+#   - Disables the enterprise repository.
+#   - Configures community (no-subscription) and Ceph repositories.
+#   - Switches APT and CT template sources to a user-defined mirror.
+#   - Backs up critical configuration files before making changes.
+#   - Updates the system and optionally installs 'openvswitch-switch'.
+#
+# Usage:       sudo /bin/bash ./Pve.sh
 # ==============================================================================
 
 # ---[ Script Configuration ]--------------------------------------------------
@@ -33,7 +36,7 @@ readonly TIME_STAMP=$(date "+%Y%m%d-%H%M%S")
 readonly MIRROR_URL="https://mirrors.ustc.edu.cn"
 
 # ---[ Logging Functions ]-----------------------------------------------------
-# These functions add color-coded prefixes to messages for better readability.
+# Color-coded prefixes for better readability.
 
 LogInfo() {
   echo -e "\033[1;32m[INFO] \033[0m$1"
@@ -55,8 +58,7 @@ LogError() {
 # ---[ Helper Functions ]-----------------------------------------------------
 
 # Creates a backup of a given file in a timestamped directory.
-# Arguments:
-#   $1: Path to the source file.
+# Arguments: $1: Path to the source file.
 BackupFile() {
   local src_file="$1"
   local backup_dest_dir="${BACKUP_DIR}/${TIME_STAMP}"
@@ -67,24 +69,8 @@ BackupFile() {
   fi
 
   mkdir -p "$backup_dest_dir"
-  # The '-a' flag preserves permissions, ownership, and timestamps.
   cp -a "$src_file" "${backup_dest_dir}/"
   LogInfo "Backed up '$src_file' to '${backup_dest_dir}/'"
-}
-
-# Disables a PVE source file by renaming it with a .bak extension.
-# Arguments:
-#   $1: The base name of the source file (e.g., 'pve-enterprise').
-DisableSourceFile() {
-    local source_name="$1"
-    local source_file="/etc/apt/sources.list.d/${source_name}.sources"
-
-    if [[ -f "$source_file" ]]; then
-        mv "$source_file" "${source_file}.bak"
-        LogInfo "Disabled source file: $source_file"
-    else
-        LogWarn "Source file not found, skipping disable: $source_file"
-    fi
 }
 
 # Updates the system, including a prompt for cleaning up unused packages.
@@ -93,7 +79,6 @@ UpdateSystem() {
   apt-get update && apt-get full-upgrade -y
   LogSuccess "System updated and upgraded successfully."
 
-  # Prompt user before running apt autoremove.
   read -r -p "Do you want to run 'apt-get autoremove' to remove unused packages? [y/N] " response
   if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     apt-get autoremove -y
@@ -106,120 +91,221 @@ UpdateSystem() {
   LogInfo "APT cache has been cleaned."
 }
 
+# ---[ Version-Specific Repository Configuration ]----------------------------
+
+# Configures APT repositories for PVE 8.x on Debian 12 (Bookworm)
+# Uses the traditional .list format.
+ConfigureReposForBookworm() {
+  LogInfo "Applying repository configuration for Debian 12 (Bookworm)..."
+  local enterprise_list="/etc/apt/sources.list.d/pve-enterprise.list"
+  local sources_list="/etc/apt/sources.list"
+
+  # Disable enterprise repo by commenting it out
+  if [[ -f "$enterprise_list" ]]; then
+    sed -i 's/^deb/#deb/' "$enterprise_list"
+    LogInfo "Disabled PVE Enterprise repository."
+  fi
+  
+  # Configure Debian repositories
+  cat > "$sources_list" <<EOF
+deb ${MIRROR_URL}/debian/ bookworm main contrib non-free non-free-firmware
+deb ${MIRROR_URL}/debian/ bookworm-updates main contrib non-free non-free-firmware
+deb ${MIRROR_URL}/debian-security bookworm-security main contrib non-free non-free-firmware
+EOF
+  LogInfo "Updated Debian sources."
+
+  # Configure PVE no-subscription repository
+  cat > /etc/apt/sources.list.d/pve-no-subscription.list <<EOF
+deb ${MIRROR_URL}/proxmox/debian/pve bookworm pve-no-subscription
+EOF
+  LogInfo "Updated PVE no-subscription source."
+
+  # Configure Ceph repository
+  if command -v ceph &> /dev/null; then
+    local ceph_codename
+    ceph_codename=$(ceph -v | awk '/ceph version / {print $(NF-1)}')
+    if [[ -n "$ceph_codename" ]]; then
+      LogInfo "Detected Ceph version: $ceph_codename"
+      cat > /etc/apt/sources.list.d/ceph.list <<EOF
+deb ${MIRROR_URL}/proxmox/debian/ceph-${ceph_codename} bookworm no-subscription
+EOF
+      LogInfo "Updated Ceph source."
+    else
+      LogWarn "Could not determine Ceph codename. Skipping Ceph repository update."
+    fi
+  else
+    LogInfo "Ceph not found. Skipping Ceph repository configuration."
+  fi
+}
+
+# Configures APT repositories for PVE 8.x on Debian 12 (Bookworm)
+# Uses the traditional .list format.
+ConfigureReposForBookworm() {
+  LogInfo "Applying repository configuration for Debian 12 (Bookworm)..."
+  local enterprise_list="/etc/apt/sources.list.d/pve-enterprise.list"
+  local sources_list="/etc/apt/sources.list"
+
+  # Disable enterprise repo by commenting it out
+  if [[ -f "$enterprise_list" ]]; then
+    sed -i 's/^deb/#deb/' "$enterprise_list"
+    LogInfo "Disabled PVE Enterprise repository."
+  fi
+  
+  # Configure Debian repositories
+  cat > "$sources_list" <<EOF
+deb ${MIRROR_URL}/debian/ bookworm main contrib non-free non-free-firmware
+deb ${MIRROR_URL}/debian/ bookworm-updates main contrib non-free non-free-firmware
+deb ${MIRROR_URL}/debian-security bookworm-security main contrib non-free non-free-firmware
+EOF
+  LogInfo "Updated Debian sources."
+
+  # Configure PVE no-subscription repository
+  cat > /etc/apt/sources.list.d/pve-no-subscription.list <<EOF
+deb ${MIRROR_URL}/proxmox/debian/pve bookworm pve-no-subscription
+EOF
+  LogInfo "Updated PVE no-subscription source."
+
+  # Configure Ceph repository
+  if command -v ceph &> /dev/null; then
+    local ceph_codename
+    ceph_codename=$(ceph -v | awk '/ceph version / {print $(NF-1)}')
+    if [[ -n "$ceph_codename" ]]; then
+      LogInfo "Detected Ceph version: $ceph_codename"
+      cat > /etc/apt/sources.list.d/ceph.list <<EOF
+deb ${MIRROR_URL}/proxmox/debian/ceph-${ceph_codename} bookworm no-subscription
+EOF
+      LogInfo "Updated Ceph source."
+    else
+      LogWarn "Could not determine Ceph codename. Skipping Ceph repository update."
+    fi
+  else
+    LogInfo "Ceph not found. Skipping Ceph repository configuration."
+  fi
+}
+
+# Configures APT repositories for PVE 9.x on Debian 13 (Trixie)
+# Uses the modern DEB822 .sources format.
+ConfigureReposForTrixie() {
+  LogInfo "Applying repository configuration for Debian 13 (Trixie)..."
+  
+  # Disable enterprise repo by renaming the file
+  local enterprise_sources="/etc/apt/sources.list.d/pve-enterprise.sources"
+  if [[ -f "$enterprise_sources" ]]; then
+    mv "$enterprise_sources" "${enterprise_sources}.bak"
+    LogInfo "Disabled PVE Enterprise repository."
+  fi
+
+  # Clear legacy sources.list file
+  echo "# See /etc/apt/sources.list.d/ for repository configuration" > /etc/apt/sources.list
+  
+  # Configure Debian repositories
+  cat > /etc/apt/sources.list.d/debian.sources <<EOF
+Types: deb
+URIs: ${MIRROR_URL}/debian
+Suites: trixie trixie-updates
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: ${MIRROR_URL}/debian-security
+Suites: trixie-security
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+  LogInfo "Updated Debian sources."
+
+  # Configure PVE no-subscription repository
+  cat > /etc/apt/sources.list.d/pve-no-subscription.sources <<EOF
+Types: deb
+URIs: ${MIRROR_URL}/proxmox/debian/pve
+Suites: trixie
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+  LogInfo "Updated PVE no-subscription source."
+  
+  # Configure Ceph repository
+  if command -v ceph &> /dev/null; then
+    local ceph_codename
+    ceph_codename=$(ceph -v | awk '/ceph version / {print $(NF-1)}')
+    if [[ -n "$ceph_codename" ]]; then
+      LogInfo "Detected Ceph version: $ceph_codename"
+      cat > /etc/apt/sources.list.d/ceph.sources <<EOF
+Types: deb
+URIs: ${MIRROR_URL}/proxmox/debian/ceph-${ceph_codename}
+Suites: trixie
+Components: no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+      LogInfo "Updated Ceph source."
+    else
+      LogWarn "Could not determine Ceph codename. Skipping Ceph repository update."
+    fi
+  else
+    LogInfo "Ceph not found. Skipping Ceph repository configuration."
+  fi
+}
+
 # ---[ Main Logic ]-----------------------------------------------------------
 
 Main() {
   # --- 1. Initial Checks and Setup ---
-  LogInfo "Starting Proxmox VE post-install optimization..."
+  LogInfo "Starting unified Proxmox VE post-install optimization..."
 
-  # Ensure the script is run as root, as it modifies system files.
   if [[ $EUID -ne 0 ]]; then
     LogError "This script must be run as root. Please use 'sudo'."
     exit 1
   fi
 
-  # Load OS release information to get the Debian codename (e.g., bookworm, trixie).
   if [[ ! -f /etc/os-release ]]; then
     LogError "/etc/os-release file not found. Cannot determine Debian version."
     exit 1
   fi
   # shellcheck source=/dev/null
   source /etc/os-release
-  # The 'VERSION_CODENAME' variable is now available from the sourced file.
   LogInfo "Detected Debian Codename: $VERSION_CODENAME"
-
 
   # --- 2. Backup Critical Configuration Files ---
   LogInfo "Backing up existing configuration files to $BACKUP_DIR..."
-  # An array makes it easy to add more files to the backup list.
   local files_to_backup=(
     "/etc/apt/sources.list"
-    "/etc/apt/sources.list.d/pve-enterprise.sources"
-    "/etc/apt/sources.list.d/debian.sources"
     "/usr/share/perl5/PVE/APLInfo.pm"
-    "/etc/network/interfaces" # From your original script
+    "/etc/network/interfaces"
   )
+  # Add version-specific repo files to the backup list
+  if [[ "$VERSION_CODENAME" == "bookworm" ]]; then
+    files_to_backup+=("/etc/apt/sources.list.d/pve-enterprise.list")
+    files_to_backup+=("/etc/apt/sources.list.d/ceph.list")
+  elif [[ "$VERSION_CODENAME" == "trixie" ]]; then
+    files_to_backup+=("/etc/apt/sources.list.d/pve-enterprise.sources")
+    files_to_backup+=("/etc/apt/sources.list.d/debian.sources")
+    files_to_backup+=("/etc/apt/sources.list.d/ceph.sources")
+  fi
+  
   for file in "${files_to_backup[@]}"; do
     BackupFile "$file"
   done
-  # Also back up the Ceph source if it exists.
-  if [[ -f "/etc/apt/sources.list.d/ceph.sources" ]]; then
-      BackupFile "/etc/apt/sources.list.d/ceph.sources"
-  fi
   LogSuccess "Configuration backup complete."
 
-
-  # --- 3. Update APT Source Lists ---
+  # --- 3. Update APT Source Lists (Conditional Logic) ---
   LogInfo "Configuring APT repositories to use mirror: $MIRROR_URL"
-
-  # Disable the PVE Enterprise repository.
-  DisableSourceFile "pve-enterprise"
-
-  # Overwrite the legacy sources.list file. Proxmox now uses the .sources format,
-  # so this file can be kept minimal to avoid conflicts.
-  echo "# See /etc/apt/sources.list.d/ for repository configuration" > /etc/apt/sources.list
-  LogInfo "Cleared legacy /etc/apt/sources.list file."
-
-  # Configure Debian sources using the detected codename.
-  cat > /etc/apt/sources.list.d/debian.sources <<EOF
-Types: deb
-URIs: ${MIRROR_URL}/debian
-Suites: ${VERSION_CODENAME} ${VERSION_CODENAME}-updates
-Components: main contrib non-free non-free-firmware
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-
-Types: deb
-URIs: ${MIRROR_URL}/debian-security
-Suites: ${VERSION_CODENAME}-security
-Components: main contrib non-free non-free-firmware
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-EOF
-  LogInfo "Updated Debian source file."
-
-  # Configure PVE no-subscription source.
-  cat > /etc/apt/sources.list.d/pve-no-subscription.sources <<EOF
-Types: deb
-URIs: ${MIRROR_URL}/proxmox/debian/pve
-Suites: ${VERSION_CODENAME}
-Components: pve-no-subscription
-Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
-EOF
-  LogInfo "Updated PVE no-subscription source file."
-
-  # Configure Ceph repository, if Ceph is installed.
-  if command -v ceph &> /dev/null; then
-    # This improved method reliably extracts the Ceph codename (e.g., 'quincy').
-    local CEPH_CODENAME
-    CEPH_CODENAME=`ceph -v | grep ceph | awk '{print $(NF-1)}'`
-
-    if [[ -n "$CEPH_CODENAME" ]]; then
-      LogInfo "Detected Ceph version: $CEPH_CODENAME"
-      cat > /etc/apt/sources.list.d/ceph.sources <<EOF
-Types: deb
-URIs: ${MIRROR_URL}/proxmox/debian/ceph-${CEPH_CODENAME}
-Suites: ${VERSION_CODENAME}
-Components: no-subscription
-Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
-EOF
-      LogInfo "Updated Ceph source file."
-    else
-      LogWarn "Could not determine Ceph codename. Skipping Ceph repository update."
-    fi
+  if [[ "$VERSION_CODENAME" == "bookworm" ]]; then
+    ConfigureReposForBookworm
+  elif [[ "$VERSION_CODENAME" == "trixie" ]]; then
+    ConfigureReposForTrixie
   else
-    LogInfo "Ceph is not installed. Skipping Ceph repository configuration."
+    LogError "Unsupported Debian version: $VERSION_CODENAME."
+    LogError "This script only supports 'bookworm' (Debian 12) and 'trixie' (Debian 13)."
+    exit 1
   fi
-
+  LogSuccess "APT repositories configured successfully."
 
   # --- 4. System Update and Package Management ---
-  # Update CT (LXC) templates first.
   LogInfo "Updating CT (LXC) templates..."
   pveam update
-
-  # Perform a full system update and upgrade.
+  
   UpdateSystem
   
-  # Ask the user if they want to install openvswitch-switch, as it's not
-  # always required.
   read -r -p "Do you want to install 'openvswitch-switch' for advanced networking? [y/N] " response
   if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     LogInfo "Installing openvswitch-switch..."
@@ -229,25 +315,21 @@ EOF
     LogInfo "Skipping installation of 'openvswitch-switch'."
   fi
 
-
   # --- 5. Final Configuration Tweaks ---
   LogInfo "Updating URL for CT template downloads..."
-  # This sed command replaces the default download URL with the mirror.
   sed -i.bak "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
   LogSuccess "CT template download URL has been updated."
   
-
   # --- 6. Restart Services ---
   LogInfo "Restarting PVE services to apply changes..."
   systemctl restart pveproxy.service pvedaemon.service
   
   LogSuccess "Services restarted."
-  echo # Add a blank line for spacing.
+  echo 
   LogSuccess "Proxmox optimization script completed successfully!"
   LogInfo "It is recommended to reboot the system to ensure all changes take effect."
 }
 
 # ---[ Script Execution ]-----------------------------------------------------
 
-# Run the main function, allowing 'set -e' to handle any errors.
 Main "$@"
