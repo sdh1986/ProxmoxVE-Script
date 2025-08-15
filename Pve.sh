@@ -11,7 +11,7 @@
 #              - Updating the system and installing optional packages.
 #              - Adjusting CT update URLs to use the mirror.
 #
-# Usage:       sudo bash ./pve-optimize.sh
+# Usage:       sudo bash ./Pve.sh
 # ==============================================================================
 
 # ---[ Script Configuration ]--------------------------------------------------
