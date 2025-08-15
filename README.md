@@ -6,11 +6,11 @@ wget -qO- https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/
 ```
 
 ```
-wget -qO- https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh | bash
+curl -sSL https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh | bash
 ```
 
 ```
-curl -sSL https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh | bash
+wget -qO- https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh | bash
 ```
 
 ```
