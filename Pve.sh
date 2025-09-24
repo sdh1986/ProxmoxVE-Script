@@ -14,7 +14,8 @@
 #   - Backs up critical configuration files before making changes.
 #   - Updates the system and optionally installs 'openvswitch-switch'.
 #   - Fixes service restart logic to ensure changes are applied immediately.
-#   - [NEW] Supports non-interactive execution via command-line flags.
+#   - Supports non-interactive execution via command-line flags.
+#   - [NEW] Uses 'at' command to schedule service restart for maximum reliability.
 #
 # Usage (Interactive):
 #   sudo /bin/bash ./Pve_fixed.sh
@@ -314,25 +315,26 @@ Main() {
 
   # --- 5. Final Configuration Tweaks ---
   LogInfo "Updating URL for CT template downloads..."
-  # Use -i without .bak since we already have a full backup from step 2
   sed -i "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
   LogSuccess "CT template download URL has been updated."
   
-  # --- 6. Restart Services ---
-  LogInfo "Stopping PVE services to apply changes..."
-  # Use 'setsid' to run systemctl in a new session. This prevents the command
-  # from being terminated if the parent shell (e.g., in a curl|bash scenario)
-  # exits prematurely. This ensures the services are reliably stopped.
-  setsid systemctl stop pveproxy.service pvedaemon.service
-
-  LogInfo "Starting PVE services..."
-  # Similarly, use 'setsid' to ensure the start command completes successfully.
-  setsid systemctl start pveproxy.service pvedaemon.service
+  # --- 6. Schedule Service Restart ---
+  LogInfo "Ensuring 'at' command is available for reliable service restart..."
+  apt-get install -y at
   
-  LogSuccess "Services restarted successfully."
+  LogInfo "Scheduling PVE services to restart in 1 minute to apply all changes."
+  # Using 'at' command to schedule the restart. This is the most reliable way
+  # to ensure the services restart correctly, especially when the script is run
+  # from a transient shell like via 'curl | bash'.
+  # The commands are piped to 'at' which will execute them in a clean, stable
+  # environment after the script has finished.
+  echo "systemctl stop pveproxy.service pvedaemon.service && systemctl start pveproxy.service pvedaemon.service" | at now + 1 minute
+  
+  LogSuccess "Service restart has been scheduled."
   echo 
   LogSuccess "Proxmox optimization script completed successfully!"
-  LogInfo "It is recommended to reboot the system to ensure all changes take effect."
+  LogInfo "Services will restart automatically in approximately one minute."
+  LogInfo "It is recommended to also reboot the system later to ensure all changes take effect."
 }
 
 # ---[ Script Execution ]-----------------------------------------------------
