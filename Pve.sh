@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # ==============================================================================
-# Unified Proxmox VE Post-Install Optimization Script (Enhanced)
+# Unified Proxmox VE Post-Install Optimization Script (Fixed)
 #
 # Description: This script intelligently optimizes a Proxmox VE installation
 #              for versions 8.x (Debian 12) and 9.x (Debian 13). It detects
@@ -14,14 +14,8 @@
 #   - Backs up critical configuration files before making changes.
 #   - Updates the system and optionally installs 'openvswitch-switch'.
 #   - Fixes service restart logic to ensure changes are applied immediately.
-#   - Supports non-interactive execution via command-line flags.
-#   - [NEW] Uses 'at' command to schedule service restart for maximum reliability.
 #
-# Usage (Interactive):
-#   sudo /bin/bash ./Pve_fixed.sh
-#
-# Usage (Non-Interactive / Automated):
-#   curl -sSL [URL] | sudo bash -s -- --autoremove --install-ovs
+# Usage:        sudo /bin/bash ./Pve_fixed.sh
 # ==============================================================================
 
 # ---[ Script Configuration ]--------------------------------------------------
@@ -32,30 +26,6 @@ set -e
 set -u
 # Pipes fail on the first command that fails, not the last.
 set -o pipefail
-
-# ---[ Argument Parsing ]------------------------------------------------------
-# Initialize variables for non-interactive flags
-AUTOREMOVE=false
-INSTALL_OVS=false
-
-# Process command-line arguments
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --autoremove)
-      AUTOREMOVE=true
-      shift # past argument
-      ;;
-    --install-ovs)
-      INSTALL_OVS=true
-      shift # past argument
-      ;;
-    *)
-      # unknown option
-      shift
-      ;;
-  esac
-done
-
 
 # ---[ Constants ]-------------------------------------------------------------
 
@@ -110,13 +80,7 @@ UpdateSystem() {
   apt-get update && apt-get full-upgrade -y
   LogSuccess "System updated and upgraded successfully."
 
-  local response=""
-  if [ "$AUTOREMOVE" = true ]; then
-      response="y"
-  else
-      read -r -p "Do you want to run 'apt-get autoremove' to remove unused packages? [y/N] " response
-  fi
-  
+  read -r -p "Do you want to run 'apt-get autoremove' to remove unused packages? [y/N] " response
   if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     apt-get autoremove -y
     LogInfo "Unused packages have been removed."
@@ -298,13 +262,7 @@ Main() {
   
   UpdateSystem
   
-  local response=""
-  if [ "$INSTALL_OVS" = true ]; then
-      response="y"
-  else
-      read -r -p "Do you want to install 'openvswitch-switch' for advanced networking? [y/N] " response
-  fi
-
+  read -r -p "Do you want to install 'openvswitch-switch' for advanced networking? [y/N] " response
   if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     LogInfo "Installing openvswitch-switch..."
     apt-get install -y openvswitch-switch
@@ -315,29 +273,27 @@ Main() {
 
   # --- 5. Final Configuration Tweaks ---
   LogInfo "Updating URL for CT template downloads..."
+  # Use -i without .bak since we already have a full backup from step 2
   sed -i "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
   LogSuccess "CT template download URL has been updated."
   
-  # --- 6. Schedule Service Restart ---
-  LogInfo "Ensuring 'at' command is available for reliable service restart..."
-  apt-get install -y at
+  # --- 6. Restart Services ---
+  # ---[ FIX ]---
+  # Changed from 'restart' to a full 'stop' then 'start'.
+  # This forces the daemons to discard their in-memory cache and re-read the
+  # modified /usr/share/perl5/PVE/APLInfo.pm file from disk.
+  LogInfo "Stopping PVE services to apply changes..."
+  systemctl stop pveproxy.service pvedaemon.service
+
+  LogInfo "Starting PVE services..."
+  systemctl start pveproxy.service pvedaemon.service
   
-  LogInfo "Scheduling PVE services to restart in 1 minute to apply all changes."
-  # Using 'at' command to schedule the restart. This is the most reliable way
-  # to ensure the services restart correctly, especially when the script is run
-  # from a transient shell like via 'curl | bash'.
-  # The commands are piped to 'at' which will execute them in a clean, stable
-  # environment after the script has finished.
-  echo "systemctl stop pveproxy.service pvedaemon.service && systemctl start pveproxy.service pvedaemon.service" | at now + 1 minute
-  
-  LogSuccess "Service restart has been scheduled."
+  LogSuccess "Services restarted successfully."
   echo 
   LogSuccess "Proxmox optimization script completed successfully!"
-  LogInfo "Services will restart automatically in approximately one minute."
-  LogInfo "It is recommended to also reboot the system later to ensure all changes take effect."
+  LogInfo "It is recommended to reboot the system to ensure all changes take effect."
 }
 
 # ---[ Script Execution ]-----------------------------------------------------
 
-# Pass command-line arguments to the Main function
 Main "$@"
