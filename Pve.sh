@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # ==============================================================================
-# Unified Proxmox VE Post-Install Optimization Script (Fixed)
+# Unified Proxmox VE Post-Install Optimization Script (Enhanced)
 #
 # Description: This script intelligently optimizes a Proxmox VE installation
 #              for versions 8.x (Debian 12) and 9.x (Debian 13). It detects
@@ -14,8 +14,13 @@
 #   - Backs up critical configuration files before making changes.
 #   - Updates the system and optionally installs 'openvswitch-switch'.
 #   - Fixes service restart logic to ensure changes are applied immediately.
+#   - [NEW] Supports non-interactive execution via command-line flags.
 #
-# Usage:        sudo /bin/bash ./Pve_fixed.sh
+# Usage (Interactive):
+#   sudo /bin/bash ./Pve_fixed.sh
+#
+# Usage (Non-Interactive / Automated):
+#   curl -sSL [URL] | sudo bash -s -- --autoremove --install-ovs
 # ==============================================================================
 
 # ---[ Script Configuration ]--------------------------------------------------
@@ -26,6 +31,30 @@ set -e
 set -u
 # Pipes fail on the first command that fails, not the last.
 set -o pipefail
+
+# ---[ Argument Parsing ]------------------------------------------------------
+# Initialize variables for non-interactive flags
+AUTOREMOVE=false
+INSTALL_OVS=false
+
+# Process command-line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --autoremove)
+      AUTOREMOVE=true
+      shift # past argument
+      ;;
+    --install-ovs)
+      INSTALL_OVS=true
+      shift # past argument
+      ;;
+    *)
+      # unknown option
+      shift
+      ;;
+  esac
+done
+
 
 # ---[ Constants ]-------------------------------------------------------------
 
@@ -80,7 +109,13 @@ UpdateSystem() {
   apt-get update && apt-get full-upgrade -y
   LogSuccess "System updated and upgraded successfully."
 
-  read -r -p "Do you want to run 'apt-get autoremove' to remove unused packages? [y/N] " response
+  local response=""
+  if [ "$AUTOREMOVE" = true ]; then
+      response="y"
+  else
+      read -r -p "Do you want to run 'apt-get autoremove' to remove unused packages? [y/N] " response
+  fi
+  
   if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     apt-get autoremove -y
     LogInfo "Unused packages have been removed."
@@ -262,7 +297,13 @@ Main() {
   
   UpdateSystem
   
-  read -r -p "Do you want to install 'openvswitch-switch' for advanced networking? [y/N] " response
+  local response=""
+  if [ "$INSTALL_OVS" = true ]; then
+      response="y"
+  else
+      read -r -p "Do you want to install 'openvswitch-switch' for advanced networking? [y/N] " response
+  fi
+
   if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     LogInfo "Installing openvswitch-switch..."
     apt-get install -y openvswitch-switch
@@ -296,4 +337,5 @@ Main() {
 
 # ---[ Script Execution ]-----------------------------------------------------
 
+# Pass command-line arguments to the Main function
 Main "$@"
