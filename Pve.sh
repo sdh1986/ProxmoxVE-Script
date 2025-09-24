@@ -13,8 +13,8 @@
 #   - Switches APT and CT template sources to a user-defined mirror.
 #   - Backs up critical configuration files before making changes.
 #   - Updates the system and optionally installs 'openvswitch-switch'.
-#   - Supports non-interactive execution via command-line flags.
-#   - [NEW] Uses 'systemd-run' to schedule service restart for ultimate reliability.
+#   - Fixes service restart logic to ensure changes are applied immediately.
+#   - [NEW] Supports non-interactive execution via command-line flags.
 #
 # Usage (Interactive):
 #   sudo /bin/bash ./Pve_fixed.sh
@@ -314,26 +314,17 @@ Main() {
 
   # --- 5. Final Configuration Tweaks ---
   LogInfo "Updating URL for CT template downloads..."
+  # Use -i without .bak since we already have a full backup from step 2
   sed -i "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
   LogSuccess "CT template download URL has been updated."
   
-  # --- 6. Schedule Service Restart ---
-  LogInfo "Scheduling a reliable service restart using systemd-run..."
-  
-  # Define the commands to be executed.
-  # Using systemd-run is the most robust method for a transient shell.
-  # It creates a temporary systemd timer and service unit that runs
-  # completely detached from the script's execution environment. This
-  # guarantees the restart happens even after the script exits.
-  # We schedule it 30 seconds into the future to allow the script to exit cleanly.
-  local restart_cmd="/bin/sh -c '/bin/systemctl stop pveproxy.service pvedaemon.service && /bin/systemctl start pveproxy.service pvedaemon.service'"
-  
-  systemd-run --on-active=30 --unit="pve-post-install-restart" $restart_cmd
-
-  LogSuccess "PVE services are scheduled to restart in 30 seconds to apply changes."
+  # --- 6. Restart Server ---
   echo 
   LogSuccess "Proxmox optimization script completed successfully!"
-  LogInfo "It is recommended to also reboot the system later to ensure all changes take effect."
+  LogInfo "It is recommended to reboot the system to ensure all changes take effect."
+  LogInfo "Restarting PVE server..."
+
+  systemctl reboot
 }
 
 # ---[ Script Execution ]-----------------------------------------------------
