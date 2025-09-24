@@ -319,15 +319,15 @@ Main() {
   LogSuccess "CT template download URL has been updated."
   
   # --- 6. Restart Services ---
-  # ---[ FIX ]---
-  # Changed from 'restart' to a full 'stop' then 'start'.
-  # This forces the daemons to discard their in-memory cache and re-read the
-  # modified /usr/share/perl5/PVE/APLInfo.pm file from disk.
   LogInfo "Stopping PVE services to apply changes..."
-  systemctl stop pveproxy.service pvedaemon.service
+  # Use 'setsid' to run systemctl in a new session. This prevents the command
+  # from being terminated if the parent shell (e.g., in a curl|bash scenario)
+  # exits prematurely. This ensures the services are reliably stopped.
+  setsid systemctl stop pveproxy.service pvedaemon.service
 
   LogInfo "Starting PVE services..."
-  systemctl start pveproxy.service pvedaemon.service
+  # Similarly, use 'setsid' to ensure the start command completes successfully.
+  setsid systemctl start pveproxy.service pvedaemon.service
   
   LogSuccess "Services restarted successfully."
   echo 
