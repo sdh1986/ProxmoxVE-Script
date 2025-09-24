@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # ==============================================================================
-# Unified Proxmox VE Post-Install Optimization Script
+# Unified Proxmox VE Post-Install Optimization Script (Fixed)
 #
 # Description: This script intelligently optimizes a Proxmox VE installation
 #              for versions 8.x (Debian 12) and 9.x (Debian 13). It detects
@@ -13,8 +13,9 @@
 #   - Switches APT and CT template sources to a user-defined mirror.
 #   - Backs up critical configuration files before making changes.
 #   - Updates the system and optionally installs 'openvswitch-switch'.
+#   - Fixes service restart logic to ensure changes are applied immediately.
 #
-# Usage:       sudo /bin/bash ./Pve.sh
+# Usage:        sudo /bin/bash ./Pve_fixed.sh
 # ==============================================================================
 
 # ---[ Script Configuration ]--------------------------------------------------
@@ -92,51 +93,6 @@ UpdateSystem() {
 }
 
 # ---[ Version-Specific Repository Configuration ]----------------------------
-
-# Configures APT repositories for PVE 8.x on Debian 12 (Bookworm)
-# Uses the traditional .list format.
-ConfigureReposForBookworm() {
-  LogInfo "Applying repository configuration for Debian 12 (Bookworm)..."
-  local enterprise_list="/etc/apt/sources.list.d/pve-enterprise.list"
-  local sources_list="/etc/apt/sources.list"
-
-  # Disable enterprise repo by commenting it out
-  if [[ -f "$enterprise_list" ]]; then
-    sed -i 's/^deb/#deb/' "$enterprise_list"
-    LogInfo "Disabled PVE Enterprise repository."
-  fi
-  
-  # Configure Debian repositories
-  cat > "$sources_list" <<EOF
-deb ${MIRROR_URL}/debian/ bookworm main contrib non-free non-free-firmware
-deb ${MIRROR_URL}/debian/ bookworm-updates main contrib non-free non-free-firmware
-deb ${MIRROR_URL}/debian-security bookworm-security main contrib non-free non-free-firmware
-EOF
-  LogInfo "Updated Debian sources."
-
-  # Configure PVE no-subscription repository
-  cat > /etc/apt/sources.list.d/pve-no-subscription.list <<EOF
-deb ${MIRROR_URL}/proxmox/debian/pve bookworm pve-no-subscription
-EOF
-  LogInfo "Updated PVE no-subscription source."
-
-  # Configure Ceph repository
-  if command -v ceph &> /dev/null; then
-    local ceph_codename
-    ceph_codename=$(ceph -v | awk '/ceph version / {print $(NF-1)}')
-    if [[ -n "$ceph_codename" ]]; then
-      LogInfo "Detected Ceph version: $ceph_codename"
-      cat > /etc/apt/sources.list.d/ceph.list <<EOF
-deb ${MIRROR_URL}/proxmox/debian/ceph-${ceph_codename} bookworm no-subscription
-EOF
-      LogInfo "Updated Ceph source."
-    else
-      LogWarn "Could not determine Ceph codename. Skipping Ceph repository update."
-    fi
-  else
-    LogInfo "Ceph not found. Skipping Ceph repository configuration."
-  fi
-}
 
 # Configures APT repositories for PVE 8.x on Debian 12 (Bookworm)
 # Uses the traditional .list format.
@@ -317,14 +273,22 @@ Main() {
 
   # --- 5. Final Configuration Tweaks ---
   LogInfo "Updating URL for CT template downloads..."
-  sed -i.bak "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
+  # Use -i without .bak since we already have a full backup from step 2
+  sed -i "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
   LogSuccess "CT template download URL has been updated."
   
   # --- 6. Restart Services ---
-  LogInfo "Restarting PVE services to apply changes..."
-  systemctl restart pveproxy.service pvedaemon.service
+  # ---[ FIX ]---
+  # Changed from 'restart' to a full 'stop' then 'start'.
+  # This forces the daemons to discard their in-memory cache and re-read the
+  # modified /usr/share/perl5/PVE/APLInfo.pm file from disk.
+  LogInfo "Stopping PVE services to apply changes..."
+  systemctl stop pveproxy.service pvedaemon.service
+
+  LogInfo "Starting PVE services..."
+  systemctl start pveproxy.service pvedaemon.service
   
-  LogSuccess "Services restarted."
+  LogSuccess "Services restarted successfully."
   echo 
   LogSuccess "Proxmox optimization script completed successfully!"
   LogInfo "It is recommended to reboot the system to ensure all changes take effect."
