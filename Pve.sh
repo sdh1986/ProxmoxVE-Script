@@ -318,13 +318,14 @@ Main() {
   sed -i "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
   LogSuccess "CT template download URL has been updated."
   
-  # --- 6. Restart Server ---
+  # --- 6. Restart Services ---
+  LogInfo "Restarting PVE services to apply changes..."
+  systemctl restart pveproxy.service pvedaemon.service
+  
+  LogSuccess "Services restarted."
   echo 
   LogSuccess "Proxmox optimization script completed successfully!"
   LogInfo "It is recommended to reboot the system to ensure all changes take effect."
-  LogInfo "Restarting PVE server..."
-
-  systemctl reboot
 }
 
 # ---[ Script Execution ]-----------------------------------------------------
