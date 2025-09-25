@@ -325,7 +325,6 @@ Main() {
   systemctl restart pveproxy.service pvedaemon.service
   LogSuccess "Services restarted."
   LogSuccess "Proxmox optimization script completed successfully!"
-  LogInfo "It is recommended to reboot the system to ensure all changes take effect."
 }
 
 # ---[ Script Execution ]-----------------------------------------------------
