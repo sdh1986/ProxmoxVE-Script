@@ -1,7 +1,7 @@
 # ProxmoxVE-Script
 This is a PVE script suitable for mainland China, which provides one-click replacement of all domestic USTC sources and backup network card information involved in PVE. For details, please refer to the script description.
 
-# 国外
+## 国外
 ```
 bash <(wget -qO- https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
@@ -10,7 +10,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs
 bash <(curl -sSL https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
 
-# 国内
+## 国内
 ```
 bash <(wget -qO- https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
