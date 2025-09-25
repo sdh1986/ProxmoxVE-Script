@@ -1,19 +1,18 @@
 # ProxmoxVE-Script
 This is a PVE script suitable for mainland China, which provides one-click replacement of all domestic USTC sources and backup network card information involved in PVE. For details, please refer to the script description.
-Optional: bash -s -- --autoremove --install-ovs, autoremove (automatically clean up useless dependencies) and install-ovs (install openvswitch)
 
 ```
-wget -qO- https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh | bash
-```
-
-```
-curl -sSL https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh | bash
+bash <(wget -qO- https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
 
 ```
-wget -qO- https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh | bash
+bash <(curl -sSL https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
 
 ```
-curl -sSL https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh | bash
+bash <(wget -qO- https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
+```
+
+```
+bash <(curl -sSL https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
