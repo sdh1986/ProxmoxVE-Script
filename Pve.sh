@@ -8,11 +8,12 @@
 #              the Debian version and applies the correct repository format.
 #
 # Key Features:
-#   - Disables the enterprise repository.
-#   - Configures community (no-subscription) and Ceph repositories.
-#   - Switches APT and CT template sources to a user-defined mirror.
-#   - Backs up critical configuration files before making changes.
-#   - Updates the system and optionally installs 'openvswitch-switch'.
+#    - Disables the enterprise repository.
+#    - Configures community (no-subscription) and Ceph repositories.
+#    - Switches APT and CT template sources to a user-defined mirror.
+#    - Backs up critical configuration files before making changes.
+#    - Updates the system and optionally installs 'openvswitch-switch'.
+#    - Patches pveceph.pm to prevent it from overwriting mirror settings.
 #
 # Usage:       sudo /bin/bash ./Pve.sh
 # ==============================================================================
@@ -92,51 +93,6 @@ UpdateSystem() {
 }
 
 # ---[ Version-Specific Repository Configuration ]----------------------------
-
-# Configures APT repositories for PVE 8.x on Debian 12 (Bookworm)
-# Uses the traditional .list format.
-ConfigureReposForBookworm() {
-  LogInfo "Applying repository configuration for Debian 12 (Bookworm)..."
-  local enterprise_list="/etc/apt/sources.list.d/pve-enterprise.list"
-  local sources_list="/etc/apt/sources.list"
-
-  # Disable enterprise repo by commenting it out
-  if [[ -f "$enterprise_list" ]]; then
-    sed -i 's/^deb/#deb/' "$enterprise_list"
-    LogInfo "Disabled PVE Enterprise repository."
-  fi
-  
-  # Configure Debian repositories
-  cat > "$sources_list" <<EOF
-deb ${MIRROR_URL}/debian/ bookworm main contrib non-free non-free-firmware
-deb ${MIRROR_URL}/debian/ bookworm-updates main contrib non-free non-free-firmware
-deb ${MIRROR_URL}/debian-security bookworm-security main contrib non-free non-free-firmware
-EOF
-  LogInfo "Updated Debian sources."
-
-  # Configure PVE no-subscription repository
-  cat > /etc/apt/sources.list.d/pve-no-subscription.list <<EOF
-deb ${MIRROR_URL}/proxmox/debian/pve bookworm pve-no-subscription
-EOF
-  LogInfo "Updated PVE no-subscription source."
-
-  # Configure Ceph repository
-  if command -v ceph &> /dev/null; then
-    local ceph_codename
-    ceph_codename=$(ceph -v | awk '/ceph version / {print $(NF-1)}')
-    if [[ -n "$ceph_codename" ]]; then
-      LogInfo "Detected Ceph version: $ceph_codename"
-      cat > /etc/apt/sources.list.d/ceph.list <<EOF
-deb ${MIRROR_URL}/proxmox/debian/ceph-${ceph_codename} bookworm no-subscription
-EOF
-      LogInfo "Updated Ceph source."
-    else
-      LogWarn "Could not determine Ceph codename. Skipping Ceph repository update."
-    fi
-  else
-    LogInfo "Ceph not found. Skipping Ceph repository configuration."
-  fi
-}
 
 # Configures APT repositories for PVE 8.x on Debian 12 (Bookworm)
 # Uses the traditional .list format.
@@ -271,6 +227,7 @@ Main() {
     "/etc/apt/sources.list"
     "/usr/share/perl5/PVE/APLInfo.pm"
     "/etc/network/interfaces"
+    "/usr/share/perl5/PVE/CLI/pveceph.pm"
   )
   # Add version-specific repo files to the backup list
   if [[ "$VERSION_CODENAME" == "bookworm" ]]; then
@@ -320,7 +277,29 @@ Main() {
   sed -i.bak "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
   LogSuccess "CT template download URL has been updated."
   
-  # --- 6. Restart Services ---
+  # --- 6. Patch pveceph.pm to prevent repository overwrites ---
+  LogInfo "Patching pveceph.pm to prevent repository file overwrites..."
+  local pveceph_pm_file="/usr/share/perl5/PVE/CLI/pveceph.pm"
+
+  if [[ ! -f "$pveceph_pm_file" ]]; then
+    LogWarn "Could not find $pveceph_pm_file, skipping patch."
+  else
+    if [[ "$VERSION_CODENAME" == "bookworm" ]]; then
+      # Patch for PVE 8.x (Bookworm) which uses ceph.list
+      LogInfo "Applying patch for Bookworm (ceph.list)..."
+      sed -i.bak 's|PVE::Tools::file_set_contents("/etc/apt/sources.list.d/ceph.list", $repolist);|#&|' "$pveceph_pm_file"
+      LogSuccess "Patched pveceph.pm for ceph.list."
+    elif [[ "$VERSION_CODENAME" == "trixie" ]]; then
+      # Patch for PVE 9.x (Trixie) which uses ceph.sources
+      LogInfo "Applying patch for Trixie (ceph.sources)..."
+      sed -i.bak 's|PVE::Tools::file_set_contents("/etc/apt/sources.list.d/ceph.sources", $repo_source);|#&|' "$pveceph_pm_file"
+      LogSuccess "Patched pveceph.pm for ceph.sources."
+    else
+      LogWarn "Unsupported Debian version for pveceph.pm patch, skipping."
+    fi
+  fi
+  
+  # --- 7. Restart Services ---
   LogInfo "Restarting PVE services to apply changes..."
   systemctl restart pveproxy.service pvedaemon.service
   LogSuccess "Services restarted."
