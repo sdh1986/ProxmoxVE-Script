@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # ==============================================================================
-# Unified Proxmox VE Post-Install Optimization Script
+# Unified Proxmox VE Post-Install Script
 #
 # Description: This script intelligently optimizes a Proxmox VE installation
 #              for versions 8.x (Debian 12) and 9.x (Debian 13). It detects
@@ -11,11 +11,13 @@
 #    - Disables the enterprise repository.
 #    - Configures community (no-subscription) and Ceph repositories.
 #    - Switches APT and CT template sources to a user-defined mirror.
+#    - Optimizes TurnKey Linux LXC template sources (metadata & download URLs).
 #    - Backs up critical configuration files before making changes.
 #    - Updates the system and optionally installs 'openvswitch-switch'.
 #    - Patches pveceph.pm to prevent it from overwriting mirror settings.
+#    - Robustly handles APT locks to prevent conflicts with background processes.
 #
-# Usage:       sudo /bin/bash ./Pve.sh
+# Usage:       /bin/bash Pve.sh or ./Pve.sh
 # ==============================================================================
 
 # ---[ Script Configuration ]--------------------------------------------------
@@ -74,10 +76,58 @@ BackupFile() {
   LogInfo "Backed up '$src_file' to '${backup_dest_dir}/'"
 }
 
+# Waits for APT locks to be released to avoid "Could not get lock" errors.
+WaitForAptLocks() {
+  LogInfo "Checking for active APT locks..."
+  local lock_files=("/var/lib/apt/lists/lock" "/var/lib/dpkg/lock" "/var/lib/dpkg/lock-frontend")
+  local timeout=300
+  local timer=0
+
+  while true; do
+    local locked=false
+    
+    # Method 1: Check lock files using fuser (most reliable)
+    if command -v fuser &> /dev/null; then
+      for lock in "${lock_files[@]}"; do
+        if fuser "$lock" >/dev/null 2>&1; then
+          locked=true
+          break
+        fi
+      done
+    # Method 2: Fallback to checking process names if fuser is missing
+    else
+      if pgrep -x "apt" >/dev/null || pgrep -x "apt-get" >/dev/null || pgrep -x "dpkg" >/dev/null; then
+        locked=true
+      fi
+    fi
+
+    if [[ "$locked" == "false" ]]; then
+      break
+    fi
+
+    if [[ "$timer" -ge "$timeout" ]]; then
+      echo ""
+      LogError "Timed out waiting for APT locks to be released. Please check running processes manually."
+      exit 1
+    fi
+
+    echo -ne "Waiting for other package management processes to finish... (${timer}s)\r"
+    sleep 1
+    timer=$((timer + 1))
+  done
+  
+  if [[ "$timer" -gt 0 ]]; then
+    echo -e "\nLocks released. Proceeding..."
+  fi
+}
+
 # Updates the system, including a prompt for cleaning up unused packages.
 UpdateSystem() {
+  WaitForAptLocks
+  
   LogInfo "Updating package lists and upgrading the system..."
-  apt-get update && apt-get full-upgrade -y
+  apt-get update
+  apt-get full-upgrade -y
   LogSuccess "System updated and upgraded successfully."
 
   read -r -p "Do you want to run 'apt-get autoremove' to remove unused packages? [y/N] " response
@@ -202,11 +252,54 @@ EOF
   fi
 }
 
+# ---[ TurnKey Linux ]-------------------------------------------
+
+ConfigureTurnKeyTemplates() {
+  LogInfo "Optimizing TurnKey Linux LXC template sources..."
+  local apl_info_pm="/usr/share/perl5/PVE/APLInfo.pm"
+
+  # 1. Replace default metadata URL with USTC mirror
+  if grep -q "releases.turnkeylinux.org/pve" "$apl_info_pm"; then
+    # Note: Backup of APLInfo.pm is handled in Main
+    sed -i "s|https://releases.turnkeylinux.org/pve|${MIRROR_URL}/turnkeylinux/metadata/pve|g" "$apl_info_pm"
+    LogSuccess "Replaced TurnKey metadata URL in APLInfo.pm"
+  else
+    LogInfo "TurnKey metadata URL already updated or not found."
+  fi
+
+  # 2. Restart pvedaemon to reload configuration
+  LogInfo "Restarting pvedaemon to apply metadata URL change..."
+  systemctl restart pvedaemon
+  LogSuccess "pvedaemon restarted."
+
+  # 3. Configure systemd override to patch internal download URLs
+  # TurnKey uses absolute URLs in their metadata, so we need a hook to fix them after download.
+  LogInfo "Configuring systemd override for pve-daily-update..."
+  local service_dir="/etc/systemd/system/pve-daily-update.service.d"
+  
+  mkdir -p "$service_dir"
+  
+  cat > "${service_dir}/update-turnkey-releases.conf" <<EOF
+[Service]
+ExecStopPost=/bin/sed -i 's|http://mirror.turnkeylinux.org|${MIRROR_URL}|' /var/lib/pve-manager/apl-info/releases.turnkeylinux.org
+EOF
+  LogSuccess "Created ${service_dir}/update-turnkey-releases.conf"
+
+  # 4. Reload systemd and start update service
+  LogInfo "Reloading systemd daemon..."
+  systemctl daemon-reload
+  
+  LogInfo "Triggering pve-daily-update.service to fetch and patch templates..."
+  systemctl start pve-daily-update.service
+  
+  LogSuccess "TurnKey Linux template complete."
+}
+
 # ---[ Main Logic ]-----------------------------------------------------------
 
 Main() {
   # --- 1. Initial Checks and Setup ---
-  LogInfo "Starting unified Proxmox VE post-install optimization..."
+  LogInfo "Starting unified Proxmox VE post-install..."
 
   if [[ $EUID -ne 0 ]]; then
     LogError "This script must be run as root. Please use 'sudo'."
@@ -273,11 +366,14 @@ Main() {
   fi
 
   # --- 5. Final Configuration Tweaks ---
-  LogInfo "Updating URL for CT template downloads..."
+  LogInfo "Updating URL for standard CT template downloads..."
   sed -i.bak "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" /usr/share/perl5/PVE/APLInfo.pm
-  LogSuccess "CT template download URL has been updated."
+  LogSuccess "Standard CT template download URL has been updated."
   
-  # --- 6. Patch pveceph.pm to prevent repository overwrites ---
+  # --- 6. TurnKey Linux Configuration (New Feature) ---
+  ConfigureTurnKeyTemplates
+  
+  # --- 7. Patch pveceph.pm to prevent repository overwrites ---
   LogInfo "Patching pveceph.pm to prevent repository file overwrites..."
   local pveceph_pm_file="/usr/share/perl5/PVE/CLI/pveceph.pm"
 
@@ -299,11 +395,11 @@ Main() {
     fi
   fi
   
-  # --- 7. Restart Services ---
-  LogInfo "Restarting PVE services to apply changes..."
+  # --- 8. Restart Services ---
+  LogInfo "Restarting PVE proxy services to apply changes..."
   systemctl restart pveproxy.service pvedaemon.service
   LogSuccess "Services restarted."
-  LogSuccess "Proxmox optimization script completed successfully!"
+  LogSuccess "Proxmox script completed successfully!"
 }
 
 # ---[ Script Execution ]-----------------------------------------------------
