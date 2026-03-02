@@ -12,9 +12,9 @@ bash <(curl -sSL https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs
 
 ## 国内
 ```
-bash <(wget -qO- https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
+bash <(wget -qO- https://gh-proxy.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
 
 ```
-bash <(curl -sSL https://ghproxy.home.sdhsparke.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
+bash <(curl -sSL https://gh-proxy.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
