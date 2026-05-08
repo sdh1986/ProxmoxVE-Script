@@ -267,11 +267,6 @@ ConfigureTurnKeyTemplates() {
     LogInfo "TurnKey metadata URL already updated or not found."
   fi
 
-  # 2. Restart pvedaemon to reload configuration
-  LogInfo "Restarting pvedaemon to apply metadata URL change..."
-  systemctl restart pvedaemon
-  LogSuccess "pvedaemon restarted."
-
   # 3. Configure systemd override to patch internal download URLs
   # TurnKey uses absolute URLs in their metadata, so we need a hook to fix them after download.
   LogInfo "Configuring systemd override for pve-daily-update..."
@@ -401,9 +396,9 @@ Main() {
   fi
   
   # --- 8. Restart Services ---
-  LogInfo "Restarting PVE proxy services to apply changes..."
-  systemctl restart pveproxy.service pvedaemon.service
-  LogSuccess "Services restarted."
+  LogInfo "Scheduling PVE proxy services restart to prevent Web UI disconnection..."
+  nohup bash -c "sleep 3; systemctl restart pveproxy.service pvedaemon.service" >/dev/null 2>&1 &
+  LogSuccess "Services will restart in the background shortly."
   LogSuccess "Proxmox script completed successfully!"
 }
 
