@@ -14,7 +14,7 @@
 #    - Optimizes TurnKey Linux LXC template sources (metadata & download URLs).
 #    - Backs up critical configuration files before making changes.
 #    - Updates the system and optionally installs 'openvswitch-switch'.
-#    - Patches pveceph.pm to prevent it from overwriting mirror settings.
+#    - Patches pveceph.pm hardcoded URLs and prevents repository overwrites.
 #    - Robustly handles APT locks to prevent conflicts with background processes.
 #
 # Usage:       /bin/bash Pve.sh or ./Pve.sh
@@ -374,20 +374,25 @@ Main() {
   ConfigureTurnKeyTemplates
   
   # --- 7. Patch pveceph.pm to prevent repository overwrites ---
-  LogInfo "Patching pveceph.pm to prevent repository file overwrites..."
+  LogInfo "Patching pveceph.pm scripts..."
   local pveceph_pm_file="/usr/share/perl5/PVE/CLI/pveceph.pm"
 
   if [[ ! -f "$pveceph_pm_file" ]]; then
     LogWarn "Could not find $pveceph_pm_file, skipping patch."
   else
+    # [NEW] Replace the hardcoded official domain with our defined mirror domain
+    LogInfo "Replacing hardcoded Proxmox download URL with mirror in pveceph.pm..."
+    sed -i "s|http://download.proxmox.com|${MIRROR_URL}/proxmox|g" "$pveceph_pm_file"
+    LogSuccess "Replaced hardcoded download URL in pveceph.pm."
+
+    # Prevent file-overwrites
+    LogInfo "Applying patch to prevent repository file overwrites..."
     if [[ "$VERSION_CODENAME" == "bookworm" ]]; then
       # Patch for PVE 8.x (Bookworm) which uses ceph.list
-      LogInfo "Applying patch for Bookworm (ceph.list)..."
       sed -i.bak 's|PVE::Tools::file_set_contents("/etc/apt/sources.list.d/ceph.list", $repolist);|#&|' "$pveceph_pm_file"
       LogSuccess "Patched pveceph.pm for ceph.list."
     elif [[ "$VERSION_CODENAME" == "trixie" ]]; then
       # Patch for PVE 9.x (Trixie) which uses ceph.sources
-      LogInfo "Applying patch for Trixie (ceph.sources)..."
       sed -i.bak 's|PVE::Tools::file_set_contents("/etc/apt/sources.list.d/ceph.sources", $repo_source);|#&|' "$pveceph_pm_file"
       LogSuccess "Patched pveceph.pm for ceph.sources."
     else
