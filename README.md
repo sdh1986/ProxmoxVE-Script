@@ -50,7 +50,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs
 bash <(curl -sSL https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
 ```
 
-### 国内节点通过 gh-proxy 加速下载 Or jsdelivr Cdn加速下载
+### 国内节点通过 gh-proxy 加速下载 或 jsdelivr cdn 加速下载
 
 ```bash
 bash <(wget -qO- https://gh-proxy.com/https://raw.githubusercontent.com/sdh1986/ProxmoxVE-Script/refs/heads/main/Pve.sh)
